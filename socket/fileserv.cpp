@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <signal.h>
+#include <fstream>
 #define MAXLEN 1024
 
 using namespace std;
@@ -50,6 +51,7 @@ class ctcpserv{
         bool accept();
         bool recv(string &buffer,const size_t maxlen);
         bool recv(void *buffer,const size_t size);
+        bool recvfile(const string &filenale,const size_t filesize);
         bool send(const string &buffer);
 
         const string & clientip() const{ //用于外部访问私有成员
@@ -110,6 +112,31 @@ bool ctcpserv::recv(string &buffer,const size_t maxlen){
 
 bool ctcpserv::recv(void *buffer,const size_t size){
     if(::recv(m_connectfd,buffer,size,0)<=0)return false;
+    return true;
+}
+
+bool ctcpserv::recvfile(const string &filename,const size_t filesize){
+    ofstream fout;
+    fout.open(filename,ios::binary);
+    if(fout.is_open() == false){
+        cout << "OPEN FILE FAILED!" <<endl;
+        return -1;
+    }
+
+    int onread = 0;
+    int totalbytes = 0;
+    char buffer[7];
+
+    while(true){
+        if(filesize - totalbytes > 7)
+            onread = 7;
+        else   
+            onread = filesize - totalbytes;
+        if(recv(buffer,onread) == false)return false;
+        fout.write(buffer,onread);
+        totalbytes += onread;
+        if(totalbytes == filesize)break;
+    }
     return true;
 }
 
@@ -194,6 +221,7 @@ int main(int argc,char *argv[]){
         char filename[256];
         int filesize;
     }fileinfo;
+
     memset(&fileinfo,0,sizeof(fileinfo));
 
     //接收文件信息
@@ -207,6 +235,19 @@ int main(int argc,char *argv[]){
     //发送回复报文
     if(tcpserv.send("OK") == false){
         perror("SEND ACK1 FAILED!");
+        return -1;
+    }
+
+    //接收文件内容 //字符串拼接时,起码有一个是string才行
+    if(tcpserv.recvfile(string(argv[2]) + "/" + fileinfo.filename,fileinfo.filesize) == false){
+        perror("recvfile()");
+        return -1;
+    }
+    cout << "RECV FILE SUCCESS!" << endl;
+
+    //发送回复报文
+    if(tcpserv.send("OK") == false){
+        perror("SEND ACK2 FAILED!");
         return -1;
     }
 

@@ -6,6 +6,7 @@
 #include <netdb.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <fstream>
 #include <arpa/inet.h>
 #define MAXLEN 1024
 
@@ -101,12 +102,37 @@ bool ctcpclient::recv(string &buffer,const size_t maxlen){
 }
 
 bool ctcpclient::sendfile(const string& filename,const size_t filesize){
+    ifstream fin(filename,ios::binary);
+    if(fin.is_open() == false){
+      cout << "OPEN FILE FAILED!" << endl;
+      return false;
+    }
     
+    int onread = 0; //每次调用fin.read()打算读取的字节数
+    int totalbytes = 0;
+    char buffer[7]; //缓冲区,每次最多读取7bytes 
+
+    while(true){
+      memset(buffer,0,sizeof(buffer));
+      if(filesize - totalbytes >7)
+        onread = 7;
+      else
+        onread = filesize - totalbytes;
+      
+        fin.read(buffer,onread);
+        if(send(buffer,onread) == false)return false;
+
+        totalbytes += onread;
+
+        if(totalbytes == filesize)break;
+    }
+
+    return true;
 }
 
 int main(int argc,char *argv[]){
     if(argc != 5){
-      cout << "arguments not match!\n" << endl;
+      cout << "arguments not match!" << endl;
       cout << "Using: ./demo IPAddress Port FileName FileSize" << endl;
       return -1;
     }
@@ -132,6 +158,7 @@ int main(int argc,char *argv[]){
         char filename[256];
         int filesize;
     }fileinfo;
+
     memset(&fileinfo,0,sizeof(fileinfo));
     strcpy(fileinfo.filename,argv[3]);
     fileinfo.filesize = atoi(argv[4]);
@@ -151,12 +178,29 @@ int main(int argc,char *argv[]){
         return -1;
     }
     if(buffer != "OK"){
-        cout << "RECV MESSAGE WRONG!" << endl;
+        cout << "RECV MESSAGE1 WRONG!" << endl;
         return -1;
     }
+    cout << "RECV ACK1 OK!" << endl;
 
     //发送文件内容
+    if(tcpclient.sendfile(fileinfo.filename,fileinfo.filesize) == false){
+      perror("sendfile()");
+      return -1;
+    }
+    cout << "SEND FILE SUCCESS!" << endl;
 
+    //接收回复报文
+    if(tcpclient.recv(buffer,2) == false){
+        perror("RECV ACK2 FAILED!");
+        return -1;
+    }
+    if(buffer != "OK"){
+        cout << "RECV MESSAGE2 WRONG!" << endl;
+        return -1;
+    }
+    cout << "RECV ACK2 OK!" << endl;
+    
     //close(tcpclient.m_clientfd); 在析构函数里面close
     return 0;
 }
