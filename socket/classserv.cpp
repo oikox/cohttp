@@ -65,6 +65,10 @@ bool ctcpserv::bind(unsigned short in_port){
     servaddr.sin_family = AF_INET;
     servaddr.sin_addr.s_addr = htonl(INADDR_ANY); //服务端任何网卡的IP都可以用于通讯
     servaddr.sin_port = htons(in_port);
+
+    int opt = 1;
+    setsockopt(m_listenfd,SOL_SOCKET,SO_REUSEPORT,&opt,sizeof(opt));
+
     if(::bind(m_listenfd,(struct sockaddr*)&servaddr,sizeof(servaddr)) != 0){
       perror("bind failed!");
       return false;

@@ -86,12 +86,15 @@ bool ctcpserv::listen(int quenum){
 }
 
 bool ctcpserv::accept(){ //这个函数可以获取客户端的IP地址存在类里面。后两个参数就不能是0了。
-    m_connectfd = ::accept(m_listenfd,0,0);
+    struct sockaddr_in caddr;
+    socklen_t addrlen = sizeof(caddr);
+    m_connectfd = ::accept(m_listenfd,(struct sockaddr*)&caddr,&addrlen);
     if(m_connectfd == -1){
         perror("ACCEPT FAILED!");
         return false;
       }
     cout << "CONNETION ESTABLISHED\n" << endl;
+    m_clientip = inet_ntoa(caddr.sin_addr);
     return true;
 }
 
@@ -250,6 +253,9 @@ int main(int argc,char *argv[]){
         perror("SEND ACK2 FAILED!");
         return -1;
     }
+
+    cout << "FILE RECV FROM CLIENT: " << tcpserv.clientip() << endl;
+    cout << "FILE NAME: " << fileinfo.filename << endl;
 
     return 0;
   }
