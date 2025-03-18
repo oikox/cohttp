@@ -543,5 +543,15 @@ setsockopt(sockfd,IPPROTO_TCP,TCPNODELAY,&opt,sizeof(opt);
 
 ## select模型
 
+```c++
+int select(int nfds, fd_set *readfds, fd_set *writefds,
+          fd_set *expectfds, struct timeval *timeout);
 
+//fd_set实际上是int[32]
+//C语言提供4个宏操作位图
+void FD_CLR(int fd, fd_set *set);
+int FD_ISSET(int fd, fd_set *set);
+void FD_SET(int fd, fd_set *set);
+void FD_ZERO(fd_set *set);
+```
 
