@@ -527,7 +527,7 @@ setsockopt(sockfd,IPPROTO_TCP,TCPNODELAY,&opt,sizeof(opt);
 
 
 
-网络通讯的读事件：
+==网络通讯的读事件==：
 
 1. 已连接的队列中有已经准备好的socket（有新的客户端连上来
 2. 接收缓存中有数据可以读（对端发送的报文已经到达
@@ -535,7 +535,7 @@ setsockopt(sockfd,IPPROTO_TCP,TCPNODELAY,&opt,sizeof(opt);
 
 
 
-网络通讯的写事件：
+==网络通讯的写事件==：
 
 发送缓冲区没有满，可以写入数据（可以向对端发送报文
 
@@ -547,6 +547,8 @@ setsockopt(sockfd,IPPROTO_TCP,TCPNODELAY,&opt,sizeof(opt);
 int select(int nfds, fd_set *readfds, fd_set *writefds,
           fd_set *expectfds, struct timeval *timeout);
 
+//nfds是fd的数量
+
 //fd_set实际上是int[32]
 //C语言提供4个宏操作位图
 void FD_CLR(int fd, fd_set *set);
@@ -555,3 +557,143 @@ void FD_SET(int fd, fd_set *set);
 void FD_ZERO(fd_set *set);
 ```
 
+
+
+
+
+### 写事件
+
+如果tcp的发送缓冲区没满,那么socket连接是可写的.
+
+一般来说,不会被填满.
+
+如果发送的数据量太大,或者网络带宽不够,有可能被填满.
+
+### 水平触发
+
+select是==水平触发==的：
+
+1. select监视的socket如果发生了事件，select会返回（通知应用程序处理事件
+
+（监视写事件会一直返回，一般不关心写事件）
+
+1. 如果事件没有被处理，再次调用select的时候会立即再通知，例如上一次recv没有读取完
+
+### select的缺点
+
+1. 采用轮询方式扫描bitmap,性能随着socket数量增多而下降
+2. 每次调用select(),需要拷贝bitmap,因为select会修改bitmap,因此要拷贝副本
+3. select()运行在用户态,网络通讯在内核态,bitmap还要拷贝到内核态,开销较大
+4. bitmap的大小决定了单个进程/线程处理的SOCKET数量,默认1024宏,可以修改,但是改大了效率更低（轮询
+
+
+
+## POLL模型
+
+```c++
+int poll(struct pollfd *fds, nfds_t nfds, int timeout);
+//nfds是fd的数量
+```
+
+
+
+```c++
+struct pollfd{
+    int fd;
+    short events;
+    short revents;
+};
+```
+
+第一个成员是需要监视的socket
+
+第二个成员是需要监视的事件
+
+第三个成员是返回的事件。
+
+poll只会修改第三个成员。
+
+传入参数是结构体的指针。
+
+
+
+### revents成员
+
+
+
+`poll()` 是一个系统调用，用于监视多个文件描述符（文件、套接字等）的状态变化（如可读、可写、异常等）。
+它的参数是一个 `struct pollfd` 数组，结构体定义如下：
+
+```c++
+struct pollfd {
+    int   fd;      // 要监视的文件描述符
+    short events;  // 关心的事件（由调用者设置）
+    short revents; // 实际发生的事件（由内核填充）
+};
+
+```
+
+- **`events`**：由调用者设置，告诉内核“我关心哪些事件”（例如 `POLLIN` 表示关心“是否有数据可读”）。
+- **`revents`**：由内核填充，表示“实际发生了哪些事件”。
+
+代码中的 `(fds[eventfd].revents & POLLIN)` 是一个按位与操作，目的是检查 `revents` 中是否包含 `POLLIN` 标志：
+
+- **如果结果 `!= 0`**：表示 `revents` 中存在 `POLLIN` 标志（有数据可读）。
+- **如果结果 `== 0`**：表示 `revents` 中没有 `POLLIN` 标志（没有数据可读）。
+
+
+
+- **7. 常见误区**
+
+- **为什么不用 `== POLLIN`？**
+  因为 `revents` 可能同时发生多个事件（例如 `POLLIN | POLLERR`），按位与操作可以精准提取目标事件。
+- **`events` 和 `revents` 的区别**：
+  `events` 是“我关心的事件”，由调用者设置；`revents` 是“实际发生的事件”，由内核填充。
+
+
+
+### poll的缺点
+
+1. 在程序中,poll的数据结构是结构体数组,传入内核后转换为数组
+2. 每调用一次select()需要拷贝两次bitmap,poll拷贝一次结构体数组
+3. poll监视的连接数没有1024的限制,但是也是遍历的方法,监视的socket越多,效率越低
+
+
+
+## EPOLL模型
+
+```c++
+       int epoll_create(int size);
+       int epoll_create1(int flags);
+```
+
+size参数必须大于0,是什么无所谓。
+
+返回的是一个文件描述符
+
+# 一个关于recv和string的小问题
+
+```c++
+    string buffer;
+    if(recv(eventfd,buffer.data(),buffer.size(),0) <= 0){
+      cout << "DISCONNECTED,CLIENT SOCKET = " << eventfd << endl;
+      close(eventfd);
+      fds[eventfd].fd = -1;
+
+      if(eventfd == maxfd){
+        for(int ii=maxfd;ii>=0;ii--){
+          if(fds[ii].fd != -1){
+            maxfd = ii;break;
+          }
+        }
+      }
+    }
+```
+
+1. **缓冲区问题**：
+
+   - 在这段代码中，`buffer.data()` 返回的是 `std::string` 的内部缓冲区指针，而 `buffer.size()` 返回的是当前字符串的大小。如果 `buffer` 是空的（即 `buffer.size()` 为 0），那么 `recv` 将无法接收任何数据，因此可能会返回 0 或 -1。
+
+   - `buffer` 是一个空的 `std::string`，因此 `buffer.size()` 返回 0。
+   - `recv(eventfd, buffer.data(), buffer.size(), 0)` 尝试从套接字 `eventfd` 接收数据，但由于 `buffer.size()` 为 0，`recv` 无法接收任何数据，因此返回 0。
+   - 因此，`recv` 的返回值小于或等于 0，导致代码认为连接已断开，并关闭了套接字。

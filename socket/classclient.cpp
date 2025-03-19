@@ -105,6 +105,7 @@ int main(int argc,char *argv[]){
     string buffer;
     for(int ii = 0; ii<10; ii++){
       int iret;
+      //cin >> buffer ;
       buffer = "this is " + to_string(ii+1) + " message";
       if(tcpclient.send(buffer) == false){
         perror("send failed!");
