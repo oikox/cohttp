@@ -671,6 +671,31 @@ size参数必须大于0,是什么无所谓。
 
 返回的是一个文件描述符
 
+
+
+## 阻塞与非阻塞I/O
+
+会阻塞的四个函数：
+
+​	connect(),accept(),send(),recv()
+
+在IO复用的模型中,==事件循环不能被阻塞在任何环节==,应该采用非阻塞的IO。
+
+一般将while(true)循环称为事件循环,事件循环不能阻塞在任何环节 
+
+之前的简单epoll模型中,最后一步
+
+```c++
+          //有报文
+          cout << "recv from client: " << buffer << endl;
+          string sendback = "recv from serv: " + string(buffer);
+          send(evs[ii].data.fd,sendback.c_str(),sendback.size(),0);
+```
+
+send()函数,如果发送缓冲区满了,会阻塞,事件循环就无法监视其他socket,并发消失
+
+
+
 # 一个关于recv和string的小问题
 
 ```c++
