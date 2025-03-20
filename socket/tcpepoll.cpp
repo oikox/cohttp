@@ -25,6 +25,21 @@ int main(int argc,char *argv[]){
   //创建epoll句柄
   int epollfd = epoll_create(1);
 
+  //为服务端的listensock准备读事件
+  epoll_event ev;
+  ev.data.fd = listensock;
+  ev.events = EPOLLIN;
+
+  epoll_ctl(epollfd,EPOLL_CTL_ADD,listensock,&ev); //把需要监视的socket加入epollfd中
+
+  epoll_event evs[10]; //存放epoll返回的事件
+  
+  while(true){
+    int infds = epoll_wait(epollfd,evs,10,-1);
+
+    
+  }
+
   
 
   return 0;
