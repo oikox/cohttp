@@ -671,7 +671,51 @@ size参数必须大于0,是什么无所谓。
 
 返回的是一个文件描述符
 
+## epoll_create
 
+```c++
+       int epoll_create(int size);
+       int epoll_create1(int flags);
+```
+
+size参数必须大于0,是什么无所谓。
+
+返回的是一个文件描述符
+
+## struct epoll_event
+
+```c++
+       struct epoll_event {
+           uint32_t      events;  /* Epoll events */
+           epoll_data_t  data;    /* User data variable */
+       };
+
+       union epoll_data {
+           void     *ptr;
+           int       fd;
+           uint32_t  u32;
+           uint64_t  u64;
+       };
+
+       typedef union epoll_data  epoll_data_t;
+```
+
+EPOLLIN是读事件,EPOLLOUT是写事件
+
+## epoll_wait
+
+```c++
+       int epoll_wait(int epfd, struct epoll_event *events,
+                      int maxevents, int timeout);
+       int epoll_pwait(int epfd, struct epoll_event *events,
+                      int maxevents, int timeout,
+                      const sigset_t *_Nullable sigmask);
+       int epoll_pwait2(int epfd, struct epoll_event *events,
+                      int maxevents, const struct timespec *_Nullable timeout,
+                      const sigset_t *_Nullable sigmask);
+```
+
+epoll_wait()第一个参数是epoll句柄,第二个是返回数组,第三个是数组大小,第四个是超时时间,-1代表不设置。
 
 ## 阻塞与非阻塞I/O
 
