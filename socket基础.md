@@ -1,4 +1,4 @@
-# socket基础
+# [socket基础]()
 
 ## getaddrinfo（）
 
@@ -737,6 +737,106 @@ epoll_wait()第一个参数是epoll句柄,第二个是返回数组,第三个是�
 ```
 
 send()函数,如果发送缓冲区满了,会阻塞,事件循环就无法监视其他socket,并发消失
+
+
+
+对非阻塞的IO调用connect0函数，不管是否能连接成功，connect0都
+会立即返回失败，errnO==EINPROGRESS
+
+对非阻塞的iO调用connect(函数后，如果socket的状态是可写的，证
+明连接是成功的，否则是失败的。 
+
+
+
+对于非阻塞的accept函数，判断失败需要if判断错误代码errno != EAGAIN
+
+![image-20250324193552395](C:\Users\oiko\AppData\Roaming\Typora\typora-user-images\image-20250324193552395.png)
+
+实际开发中肯定不会这么写。这是测试代码。
+
+
+
+对非阻塞的IO调用recv0，如果没数据可读（接收缓冲区为空），函数
+立即返回失败，errno==EAGAIN
+
+
+
+对非阻塞的iO调用send0，如果socket不可写（发送缓冲区已满），函
+数立即返回失败，errno==EAGAIN
+
+
+
+## 水平触发和边缘触发
+
+SELECT和POLL采用水平触发
+
+EPOLL缺省是水平触发
+
+
+
+## 水平触发
+
+读事件：如果epoll_wait触发了读事件，表示有数据可读，如果程
+序没有把数据读完，再次调用epoll_wait的时候，将立即再次触发
+读事件。
+
+写事件：如果发送缓冲区没有满，表示可以写入数据，只要缓冲区没
+有被写满，再次调用epoll_wait的时候，将立即再次触发写事件。
+
+## 边缘触发
+
+读事件：epoll_wait触发读事件后，==不管程序有没有处理读事件，==
+==epoll_wait都不会再触发读事件==，只有当新的数据到达时，才再次
+触发读事件。
+
+写事件：epoll_wait触发写事件之后，如果发送缓冲区仍可以写（发
+送缓冲区没有满），epoll_wait不会再次触发写事件，只有当发送缓
+冲区由==满==变成==不满==时，才再次触发写事件。
+
+
+
+在epoll==边缘触发==时，listen的==处理需要循环==。循环时==socket必须是非阻塞==的。
+
+```c++
+ev.events = EPOLLIN | EPOLLET; //ET边缘模式
+```
+
+```c++
+      if(evs[ii].data.fd == listensock){
+
+        while(true){
+          struct sockaddr_in client;
+          socklen_t len = sizeof(client);
+          int clientsock = accept(listensock,(struct sockaddr*)&client,&len);
+          if((clientsock < 0 && errno == EAGAIN))break;
+          cout << "ACCEPT, CLIENT SOCK = "<< clientsock <<endl;
+            
+          static int k = 0;
+          printf("this is %d connect\n",++k);
+            
+          //为新客户端准备读事件,加入epoll中
+          ev.data.fd = clientsock;
+          ev.events = EPOLLIN;
+          epoll_ctl(epollfd,EPOLL_CTL_ADD,clientsock,&ev);
+        }
+      }
+```
+
+if((clientsock < 0 && errno == EAGAIN))break;
+
+这段代码表示==非阻塞且errno == EAGAIN==时，代表已连接队列中没有socket了，跳出循环。
+
+
+
+## 连接后水平触发与边缘触发的不同
+
+边缘触发的处理比较麻烦，如果信息太长超过了recv的接收，那么就不会一次性接受完。因此需要更改代码。
+
+边缘触发的代码水平触发也可以用。
+
+```c++
+
+```
 
 
 
