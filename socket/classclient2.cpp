@@ -105,15 +105,17 @@ int main(int argc,char *argv[]){
     //return 0;
 
     string buffer;
-    for(int ii = 0; ii<10; ii++){
+    for(int ii = 0; ii<1000000; ii++){
       int iret;
-      cin >> buffer ;
-      //buffer = "this is " + to_string(ii+1) + " message";
+      /*
+      //cin >> buffer ;
+      buffer = "this is " + to_string(ii+1) + " message";
       if(tcpclient.send(buffer) == false){
         perror("send failed!");
         break;
       }
       cout << "send to serv: " << buffer << endl;
+      */
 
       //再接受服务器端的回应
       if((iret = tcpclient.recv(buffer,MAXLEN))<=0){
@@ -121,7 +123,7 @@ int main(int argc,char *argv[]){
         break;
       }
       cout << "recv from serv :" << buffer << endl;
-      sleep(1);
+      usleep(1000);
     }
 
     //close(tcpclient.m_clientfd);

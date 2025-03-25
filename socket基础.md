@@ -702,6 +702,57 @@ size参数必须大于0,是什么无所谓。
 
 EPOLLIN是读事件,EPOLLOUT是写事件
 
+`epoll_event` 是 `epoll` 实现高效 I/O 多路复用的关键，通过它注册事件类型并绑定自定义数据，使得应用程序能精准处理高并发的网络请求。
+
+典型使用场景
+
+1. **注册事件（`epoll_ctl`）**
+
+```c++
+struct epoll_event ev;
+ev.events = EPOLLIN | EPOLLET; // 监听可读事件 + 边缘触发模式
+ev.data.fd = sockfd;           // 关联 socket 文件描述符
+epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sockfd, &ev);
+
+```
+
+2 **处理就绪事件（`epoll_wait`）**
+
+```c++
+struct epoll_event events[MAX_EVENTS];
+int n = epoll_wait(epoll_fd, events, MAX_EVENTS, timeout);
+for (int i = 0; i < n; i++) {
+    if (events[i].events & EPOLLIN) {
+        int ready_fd = events[i].data.fd; // 获取就绪的 fd
+        handle_read(ready_fd);
+    }
+}
+```
+
+
+
+高级技巧
+
+- **边缘触发（ET） vs 水平触发（LT）**
+  若设置 `EPOLLET`，需确保一次性处理完所有数据（可能需循环读写直到 `EAGAIN` 错误）。
+
+- **通过 `data.ptr` 传递上下文**
+  例如，将 socket 和关联的缓冲区绑定：
+
+  ```c++
+  struct Session {
+      int fd;
+      char buffer[1024];
+  };
+  
+  struct Session* session = malloc(sizeof(struct Session));
+  session->fd = sockfd;
+  ev.data.ptr = session; // 传递会话对象
+  
+  ```
+
+  
+
 ## epoll_wait
 
 ```c++
@@ -828,17 +879,213 @@ if((clientsock < 0 && errno == EAGAIN))break;
 
 
 
-## 连接后水平触发与边缘触发的不同
+## 边缘触发的写事件
 
 边缘触发的处理比较麻烦，如果信息太长超过了recv的接收，那么就不会一次性接受完。因此需要更改代码。
 
 边缘触发的代码水平触发也可以用。
 
+
+
+写事件下：
+
+水平触发会不断地提示，只要发送缓冲区没满
+
+边缘触发只会触发一次，下次触发是由满变为不满状态
+
+`epoll_wait` 的边缘触发（Edge-Triggered, ET）模式中的**写事件**是指：当套接字从“不可写”变为“可写”状态时，`epoll_wait` 会触发一次事件通知。这种模式下，应用程序需要在这个事件触发时，尽可能多地写入数据，直到遇到 `EAGAIN` 或 `EWOULDBLOCK` 错误。
+
+- **第一次写入**：
+  你调用 `send(socket_fd, data, data_size, 0)`，成功写入部分数据，但返回 `EAGAIN/EWOULDBLOCK`，表示缓冲区已满。
+- **注册EPOLLOUT事件**：
+  此时你需要通过 `epoll_ctl` 注册 `EPOLLOUT` 事件（并设置 `EPOLLET` 标志），等待套接字再次变为可写。
+- **边缘触发事件到来**：
+  当内核的发送缓冲区有空间时（即套接字从“不可写”变为“可写”），`epoll_wait` 会触发一次 `EPOLLOUT` 事件。
+- **处理写事件**：
+  在事件触发时，你必须尽可能多地调用 `send`，直到所有数据发送完毕或再次遇到 `EAGAIN`。
+
 ```c++
+// 非阻塞套接字 + ET模式
+struct epoll_event event;
+event.events = EPOLLOUT | EPOLLET;
+epoll_ctl(epfd, EPOLL_CTL_ADD, socket_fd, &event);
+
+while (1) {
+  int n = epoll_wait(epfd, events, MAX_EVENTS, -1);
+  for (每个触发的事件) {
+    if (事件是 EPOLLOUT) {
+      while (1) {
+        ssize_t ret = send(socket_fd, data_ptr, data_remaining, 0);
+        if (ret > 0) {
+          data_ptr += ret;
+          data_remaining -= ret;
+          if (data_remaining == 0) {
+            // 所有数据已发送：取消监听 EPOLLOUT
+            event.events = EPOLLIN | EPOLLET;  // 只监听读事件
+            epoll_ctl(epfd, EPOLL_CTL_MOD, socket_fd, &event);
+            break;
+          }
+        } else if (ret == -1) {
+          if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            // 缓冲区再次满了，等待下次 EPOLLOUT 事件
+            break;
+          } else {
+            // 处理错误
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### 关键注意事项：
+
+1. **只在需要时注册EPOLLOUT**：
+   - 不要在套接字始终可写时注册 `EPOLLOUT`（例如刚连接的空闲套接字），否则ET模式会不断触发事件，导致CPU空转。
+   - 通常仅在 `send` 返回 `EAGAIN` 后注册 `EPOLLOUT`。
+2. **必须处理EAGAIN**：
+   在ET模式下，如果一次 `EPOLLOUT` 事件触发后没有完全写入数据，必须保存剩余数据，等待下次事件。
+3. **避免“饥饿”问题**：
+   如果同时监听 `EPOLLIN` 和 `EPOLLOUT`，在ET模式下需要确保读/写事件不会互相阻塞。
+
+边缘触发模式的优点是减少了事件触发的次数，但需要更精细的逻辑控制。
+
+
+
+### ET模式写事件底层机制
+
+你的问题非常关键！这里存在一个常见的理解误区，让我们从底层机制出发，彻底理清ET模式下 `EPOLLOUT` 的行为。
+
+
+
+#### 核心结论：
+
+**ET模式的 `EPOLLOUT` 事件触发条件确实是“从不可写变为可写”**。但若在套接字**初始状态就是可写**时注册 `EPOLLOUT|EPOLLET`，会**立即触发一次事件**（因为内核认为这是一次“状态变化”），而如果此时不正确处理，会导致**逻辑上的死循环**，看似“不断触发”。
+
+
+
+### 关键机制解析
+
+#### 1. **ET模式的“状态变化”如何定义？**
+
+- ET模式检测的是**“边缘跳变”**（状态变化瞬间），而非持续状态。
+- **关键细节**：当调用 `epoll_ctl(EPOLL_CTL_ADD/EPOLL_CTL_MOD)` 修改监听事件时，如果此时套接字**已处于可写状态**，内核会认为这是一次“从不可写到可写”的跳变（即使之前未监听该事件），从而触发 `EPOLLOUT` 事件。
+
+#### 2. **初始可写状态的陷阱**
+
+- **场景**：新建的TCP连接（发送缓冲区为空，天然可写）。
+
+- **错误操作**：直接注册 `EPOLLOUT|EPOLLET`。
+
+- **结果**：立即触发 `EPOLLOUT` 事件（因为当前状态是可写，而之前未监听）。
+
+- 危险循环
+
+  1. 事件触发 → 调用 `send` 写入数据。
+  2. 若未写满缓冲区（例如数据量小），套接字**仍然可写**。
+  3. 由于未遇到 `EAGAIN`，未取消 `EPOLLOUT` 监听。
+  4. 内核认为后续没有新的状态跳变，**不会再次触发事件**。
+
+  - **看似矛盾的现象**：虽然ET模式不会重复触发，但**第一次触发的事件可能被错误处理**，导致逻辑进入循环。
+
+示例：错误代码导致的“假死循环”
+
+```c++
+// 错误示例：在初始可写状态注册 EPOLLOUT|EPOLLET
+struct epoll_event event;
+event.events = EPOLLOUT | EPOLLET;  // 套接字初始可写！
+epoll_ctl(epfd, EPOLL_CTL_ADD, socket_fd, &event);
+
+while (1) {
+  epoll_wait(epfd, ...);  // 第一次立即返回 EPOLLOUT
+  if (EPOLLOUT事件) {
+    send(socket_fd, data, ...);  // 假设一次性写完，未触发EAGAIN
+    // 未取消 EPOLLOUT 监听！
+  }
+}
 
 ```
 
+**结果**：
 
+- `epoll_wait` 第一次触发 `EPOLLOUT`。
+
+- 写入数据后，若缓冲区仍有空间（未填满），套接字**保持可写**。
+
+- 但由于ET模式不会重复通知，后续 `epoll_wait` 会**阻塞**，不会死循环。
+
+- 矛盾点：
+
+  看似没有死循环，但问题出在逻辑设计错误：
+
+  - 如果在 `send` 后仍有数据要发送，但未监听 `EPOLLOUT`，会导致数据无法继续发送。
+  - 如果在 `send` 后错误地保持监听 `EPOLLOUT`，但没有新的状态跳变，后续也无法触发事件。
+
+### 正确实践：何时注册 `EPOLLOUT`？
+
+#### 1. **黄金规则**
+
+- **仅在 `send`/`write` 返回 `EAGAIN` 后注册 `EPOLLOUT|EPOLLET`**。
+- **一旦成功写入数据（无 `EAGAIN`），立即取消 `EPOLLOUT` 监听**。
+
+#### 2. 正确代码流程
+
+```c++
+// 初始状态：不监听 EPOLLOUT
+event.events = EPOLLIN | EPOLLET;  // 只监听读事件
+epoll_ctl(epfd, EPOLL_CTL_ADD, socket_fd, &event);
+
+// 当需要发送数据时：
+ssize_t ret = send(socket_fd, data, data_size, 0);
+if (ret == -1 && errno == EAGAIN) {
+  // 缓冲区已满，注册 EPOLLOUT 等待可写事件
+  event.events = EPOLLIN | EPOLLOUT | EPOLLET;
+  epoll_ctl(epfd, EPOLL_CTL_MOD, socket_fd, &event);
+}
+
+```
+
+#### 3. 处理 `EPOLLOUT` 事件
+
+```c++
+if (events[i].events & EPOLLOUT) {
+  while (1) {
+    ret = send(socket_fd, data_ptr, remaining, 0);
+    if (ret > 0) {
+      remaining -= ret;
+      if (remaining == 0) {
+        // 全部发送完成，取消 EPOLLOUT 监听
+        event.events = EPOLLIN | EPOLLET;
+        epoll_ctl(epfd, EPOLL_CTL_MOD, socket_fd, &event);
+        break;
+      }
+    } else if (ret == -1) {
+      if (errno == EAGAIN) {
+        // 缓冲区再次满，等待下次 EPOLLOUT 事件
+        break;
+      } else {
+        // 处理错误
+      }
+    }
+  }
+}
+
+```
+
+### 对比ET与LT模式
+
+|        行为         |         边缘触发（ET）          |       水平触发（LT）       |
+| :-----------------: | :-----------------------------: | :------------------------: |
+| `EPOLLOUT` 触发条件 | 仅当“不可写→可写”跳变时触发一次 |     只要可写，持续触发     |
+|  初始可写+注册事件  |            触发一次             |     持续触发直到不可写     |
+|      资源消耗       |   需手动管理状态，避免误触发    | 自动重复通知，易导致忙等待 |
+
+### 终极结论
+
+- **ET模式下 `EPOLLOUT` 的“误触发”本质是注册时机错误**，而非模式本身的漏洞。
+- **始终遵循“仅在 `EAGAIN` 后注册 `EPOLLOUT`”的原则**，可彻底避免CPU空转。
+- 理解ET模式需要结合**状态跳变**和**内核事件队列**的底层机制，而非简单记忆规则。
 
 # 一个关于recv和string的小问题
 
@@ -866,3 +1113,8 @@ if((clientsock < 0 && errno == EAGAIN))break;
    - `buffer` 是一个空的 `std::string`，因此 `buffer.size()` 返回 0。
    - `recv(eventfd, buffer.data(), buffer.size(), 0)` 尝试从套接字 `eventfd` 接收数据，但由于 `buffer.size()` 为 0，`recv` 无法接收任何数据，因此返回 0。
    - 因此，`recv` 的返回值小于或等于 0，导致代码认为连接已断开，并关闭了套接字。
+
+
+
+# EPOLL原理
+

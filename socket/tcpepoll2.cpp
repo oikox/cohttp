@@ -42,7 +42,7 @@ int main(int argc,char *argv[]){
   ev.data.fd = listensock;
   ev.events = EPOLLIN;
 
-  ev.events = EPOLLIN | EPOLLET; //ET边缘模式
+  //ev.events = EPOLLIN | EPOLLET; //ET边缘模式
 
   epoll_ctl(epollfd,EPOLL_CTL_ADD,listensock,&ev); //把需要监视的socket加入epollfd中
 
@@ -74,31 +74,51 @@ int main(int argc,char *argv[]){
           static int k = 0;
           printf("this is %d connect\n",++k);
           
-          //setnoblocking(clientsock);
+          setnoblocking(clientsock);
 
           //为新客户端准备读事件,加入epoll中
           ev.data.fd = clientsock;
-          ev.events = EPOLLIN;
-          ev.events = EPOLLIN | EPOLLET;
+          //ev.events = EPOLLIN;
+          ev.events = EPOLLOUT | EPOLLET;
+          //ev.events = EPOLLIN | EPOLLET;
           epoll_ctl(epollfd,EPOLL_CTL_ADD,clientsock,&ev);
         }
       }
       else{
         //如果是有报文或者连接已断开
+        /*
         char buffer[1024];
         memset(buffer,0,sizeof(buffer));
-        if(recv(evs[ii].data.fd,buffer,5,0)<=0){
-          cout << "DISCONNECTED, CLIENT SOCK ="<<evs[ii].data.fd << endl;
-          close(evs[ii].data.fd);
-          //epollfd中如果socket断开,会自动删除,不需要程序员手动写代码删除
-          //epoll_ctl(epollfd,EPOLL_CTL_DEL,evs[ii].data.fd,0);
+        int readn; //每次调用recv的返回值
+        char* ptr = buffer; //buffer的位置指针
+        while(true){
+          if((readn = recv(evs[ii].data.fd,ptr,5,0))<=0){
+            if((readn <0) && (errno == EAGAIN)){
+              //数据被读取完毕,则发回报文
+              send(evs[ii].data.fd,buffer,strlen(buffer),0);
+              cout << "recv: " << buffer << endl;
+            }
+            else{
+              //连接断开
+              cout << "disconnected,eventfd = " << evs[ii].data.fd << endl;
+              close(evs[ii].data.fd);
+            }
+            break;
+          }
+          else{
+            ptr += readn; //buffer指针后移
+          }
         }
-        else{
-          //有报文
-          cout << "recv from client: " << buffer << endl;
-          string sendback = "recv from serv: " + string(buffer);
-          send(evs[ii].data.fd,sendback.c_str(),sendback.size(),0);
+        */
+       cout << "ET WRITE EVENT" << endl;
+       for(int k=0;k<1000000;k++){
+        if(send(ev.data.fd,"aaaaaaaaaaaaaaaaaaaavgbbbbbbbbbbbb",30,0)<=0){
+          if(errno == EAGAIN){
+            cout << "SEND CACHE FULL" << endl;
+            break;
+          }
         }
+       }
       }
     }
   }
