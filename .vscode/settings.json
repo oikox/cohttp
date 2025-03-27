@@ -1,10 +1,15 @@
 {
     "files.associations": {
-        "string": "cpp",
-        "ostream": "cpp",
-        "cstring": "cpp",
-        "cstdlib": "cpp",
-        "*.tcc": "cpp"
+      "*.vue": "vue",
+      "*.wpy": "vue",
+      "*.wxml": "html",
+      "*.wxss": "css",
+      "string": "cpp",
+      "ostream": "cpp",
+      "cstring": "cpp",
+      "cstdlib": "cpp",
+      "*.tcc": "cpp",
+      "cerrno": "cpp"
     },
     "C_Cpp.errorSquiggles": "enabled"
 }
